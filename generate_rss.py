@@ -130,12 +130,10 @@ def parse_md_file(md_file_path):
         # 注意：确保 FEED_LINK 末尾没有斜杠，或者这里处理好拼接
         link = f"{FEED_LINK.rstrip('/')}/{filename_with_ext}" # 使用仓库链接和完整文件名
 
-        # 将 Markdown 转换为 HTML - 这部分逻辑保持不变
-        # 可以移除标题、时间和链接行，避免在 description 中重复
-        # 注意：由于 title 和 link 不再从 markdown 中提取，移除它们的步骤可以省略或调整
-        content_body_md = re.sub(r'^##\s+.*\n?', '', content_md, count=1, flags=re.MULTILINE) # 仍然移除旧标题行
-        content_body_md = re.sub(r'^\*\*发布时间:\*\*\s*.*\n?', '', content_body_md, count=1, flags=re.MULTILINE)
-        content_body_md = re.sub(r'^\*\*链接:\*\*\s*.*\n?', '', content_body_md, count=1, flags=re.MULTILINE) # 仍然移除旧链接行
+        # 将 Markdown 转换为 HTML
+        # 移除文件顶部的日期标题 (例如: # 20250505 新闻)
+        # 保留所有新闻条目的 ## 标题, **发布时间:**, **链接:**, ### 全文内容: 等
+        content_body_md = re.sub(r'^#\s+.*\n\n?', '', content_md, count=1, flags=re.MULTILINE)
         content_html = markdown.markdown(content_body_md.strip())
 
         # 3. 修改 guid 生成方式
