@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from flask import Flask, send_file, Response
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger # <--- 添加这行导入
 import requests
 import subprocess
 import glob
@@ -218,49 +219,42 @@ def process_rss_update():
 def init_scheduler():
     """初始化定时任务调度器"""
     scheduler = BackgroundScheduler()
-    
+
     # 添加东京时间 22:00 的 RSS 更新任务
     scheduler.add_job(
         process_rss_update,
-        CronTrigger(hour=22, minute=00, timezone=TIMEZONE_TOKYO),
-        id='rss_update',
-        name='RSS Update Task'
+        trigger=CronTrigger(hour=22, minute=0, timezone=TIMEZONE_TOKYO),
+        id='daily_rss_update',
+        name='Daily RSS Update at 22:00 Tokyo Time',
+        replace_existing=True
     )
-    
-    # 添加每 5 分钟的自我 ping 任务
+
+    # 添加每 5 分钟 ping 自己的任务 (Render free tier might sleep after 5 min inactivity)
     scheduler.add_job(
         ping_self,
-        'interval',
-        minutes=5,
-        id='ping_task',
-        name='Self Ping Task'
+        trigger=IntervalTrigger(minutes=5), # Slightly less than 5 min
+        id='self_ping',
+        name='Ping self every 5 minutes',
+        replace_existing=True
     )
-    
-    # 启动调度器
+
     scheduler.start()
-    logging.info("定时任务调度器已启动")
-    return scheduler
+    logging.info("调度器已启动")
 
-# 应用启动时执行的初始化
-@app.before_first_request
-def before_first_request():
-    """在第一个请求之前执行初始化"""
-    init_feed_from_github()
+# 不再需要 @app.before_first_request
+# @app.before_first_request
+# def initialize_app():
+#     """应用首次请求前执行初始化"""
+#     compare_and_update_feed()
+#     init_scheduler()
 
-# 主函数
-if __name__ == "__main__":
-    # 初始化 feed.xml
-    init_feed_from_github()
-    
-    # 初始化调度器
-    scheduler = init_scheduler()
-    
-    try:
-        # 获取端口（支持环境变量配置，默认 5000）
-        port = int(os.environ.get('PORT', 5000))
-        
-        # 启动 Flask 应用
-        app.run(host='0.0.0.0', port=port)
-    except (KeyboardInterrupt, SystemExit):
-        # 确保在应用关闭时关闭调度器
-        scheduler.shutdown()
+# 在应用加载时直接执行初始化逻辑
+init_feed_from_github() # <--- 将 compare_and_update_feed() 修改为 init_feed_from_github()
+init_scheduler()
+
+# 本地开发时运行
+if __name__ == '__main__':
+    # 获取端口号，Render 会设置 PORT 环境变量
+    port = int(os.environ.get('PORT', 5000))
+    # 允许外部访问，Render 需要 0.0.0.0
+    app.run(host='0.0.0.0', port=port)
