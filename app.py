@@ -41,16 +41,17 @@ TIMEZONE_TOKYO = pytz.timezone('Asia/Tokyo')
 def init_feed_from_github():
     """
     从 GitHub 获取 feed.xml 并与本地文件比较，
-    使用较新的版本作为项目初始化的 feed.xml
+    使用较新的版本作为项目初始化的 feed.xml，
+    如果本地版本较新，则推送到 GitHub。
     """
     logging.info("正在初始化 feed.xml...")
-    
-    # 获取远程 feed.xml
+
+    # 获取远程 feed.xml 内容和 SHA
     remote_content, remote_sha = github_sync.get_remote_feed()
-    
+
     # 检查本地是否存在 feed.xml
     local_exists = os.path.exists(FEED_FILE)
-    
+
     if remote_content and local_exists:
         # 比较两个文件的 lastBuildDate
         try:
@@ -58,31 +59,55 @@ def init_feed_from_github():
             remote_tree = ET.ElementTree(ET.fromstring(remote_content))
             remote_channel = remote_tree.getroot().find('channel')
             remote_build_date = remote_channel.find('lastBuildDate').text if remote_channel.find('lastBuildDate') is not None else None
-            
+
             # 解析本地 XML
             local_tree = ET.parse(FEED_FILE)
             local_channel = local_tree.getroot().find('channel')
             local_build_date = local_channel.find('lastBuildDate').text if local_channel.find('lastBuildDate') is not None else None
-            
+
             logging.info(f"远程 lastBuildDate: {remote_build_date}")
             logging.info(f"本地 lastBuildDate: {local_build_date}")
-            
-            # 如果远程版本较新，则使用远程版本
+
+            # 如果远程和本地都有日期，进行比较
             if remote_build_date and local_build_date:
                 from email.utils import parsedate_to_datetime
                 remote_date = parsedate_to_datetime(remote_build_date)
                 local_date = parsedate_to_datetime(local_build_date)
-                
+
                 if remote_date > local_date:
                     logging.info("远程 feed.xml 较新，使用远程版本")
                     with open(FEED_FILE, 'w', encoding='utf-8') as f:
                         f.write(remote_content)
+                elif local_date > remote_date: # 修改这里：仅当本地严格较新时推送
+                    logging.info("本地 feed.xml 较新，推送到 GitHub")
+                    # 推送本地文件到 GitHub
+                    commit_message = f"Sync local feed.xml (newer) from startup"
+                    # 确保 remote_sha 在这里可用
+                    if remote_sha:
+                        github_sync.push_feed_to_github(FEED_FILE, commit_message, remote_sha)
+                    else:
+                        logging.warning("无法获取远程 SHA，跳过推送本地 feed.xml")
                 else:
-                    logging.info("本地 feed.xml 较新，保留本地版本")
-            else:
-                logging.warning("无法比较日期，保留本地版本")
+                    logging.info("本地和远程 feed.xml 日期相同，保留本地版本")
+            elif local_build_date and not remote_build_date:
+                 # 本地有日期，远程没有，认为本地较新，尝试推送
+                 logging.info("本地 feed.xml 有日期，远程没有，尝试推送到 GitHub")
+                 commit_message = f"Sync local feed.xml (remote has no date) from startup"
+                 if remote_sha:
+                     github_sync.push_feed_to_github(FEED_FILE, commit_message, remote_sha)
+                 else:
+                     # 如果远程文件本身就不存在 (remote_sha is None)，则直接创建
+                     github_sync.push_feed_to_github(FEED_FILE, commit_message, None)
+
+            else: # 其他情况（例如只有远程有日期，或两者都没有日期）
+                logging.warning("无法明确比较日期或远程日期较新，保留本地版本（或使用远程版本覆盖，如果本地无日期）")
+                if remote_build_date and not local_build_date:
+                    logging.info("远程 feed.xml 有日期，本地没有，使用远程版本")
+                    with open(FEED_FILE, 'w', encoding='utf-8') as f:
+                        f.write(remote_content)
+
         except Exception as e:
-            logging.error(f"比较 feed.xml 版本时出错: {e}")
+            logging.error(f"比较或处理 feed.xml 版本时出错: {e}")
             logging.info("保留本地版本")
     elif remote_content:
         # 本地不存在但远程存在，使用远程版本
@@ -90,12 +115,19 @@ def init_feed_from_github():
         with open(FEED_FILE, 'w', encoding='utf-8') as f:
             f.write(remote_content)
     elif local_exists:
-        # 远程不存在但本地存在，保留本地版本
-        logging.info("远程不存在 feed.xml，保留本地版本")
+        # 远程不存在但本地存在，推送本地版本
+        logging.info("远程不存在 feed.xml，推送本地版本到 GitHub")
+        commit_message = "Initialize feed.xml from local file"
+        # remote_sha 此时应为 None，push_feed_to_github 会处理创建新文件
+        github_sync.push_feed_to_github(FEED_FILE, commit_message, None)
     else:
         # 两者都不存在，创建一个空的 feed.xml
         logging.info("本地和远程都不存在 feed.xml，创建空文件")
         generate_rss.build_rss_feed([], FEED_FILE)
+        # 尝试推送这个新创建的空文件
+        logging.info("推送新创建的空 feed.xml 到 GitHub")
+        commit_message = "Create initial empty feed.xml"
+        github_sync.push_feed_to_github(FEED_FILE, commit_message, None)
 
 # 定义 Flask 路由，提供 feed.xml 访问
 @app.route('/feed.xml')
