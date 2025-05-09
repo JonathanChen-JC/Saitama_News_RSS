@@ -75,12 +75,19 @@ def scrape_article_content(url):
             for script_or_style in article_body(['script', 'style']):
                 script_or_style.decompose()
 
+            # 新增：移除所有超链接 (<a> 标签) 及其包含的文本
+            for a_tag in article_body.find_all('a'):
+                a_tag.decompose()
+
             # 获取所有段落文本，并合并
             paragraphs = article_body.find_all('p')
             if paragraphs:
-                 content = '\n'.join(p.get_text(strip=True) for p in paragraphs)
+                 # 从段落中获取文本，此时超链接已被移除
+                 # 过滤掉可能因移除链接后变为空字符串的段落
+                 content_parts = [p.get_text(strip=True) for p in paragraphs]
+                 content = '\n'.join(part for part in content_parts if part) # 确保不加入空行
             else:
-                 # 如果没有 p 标签，尝试获取整个容器的文本
+                 # 如果没有 p 标签，尝试获取整个容器的文本 (超链接已被移除)
                  content = article_body.get_text(separator='\n', strip=True)
             return content.strip()
         else:
