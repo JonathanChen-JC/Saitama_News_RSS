@@ -6,6 +6,7 @@ import requests
 import json
 from datetime import datetime
 from dotenv import load_dotenv
+import time # 新增导入 time 模块
 
 # --- 配置日志 ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -61,30 +62,48 @@ def translate_with_gemini(content):
             "maxOutputTokens": 100000
         }
     }
+
+    max_retries = 5
+    retry_delay = 120  # 2分钟，单位秒
+    retries = 0
+
+    while retries < max_retries:
+        try:
+            response = requests.post(
+                GEMINI_API_URL,
+                headers=headers,
+                data=json.dumps(data),
+                timeout=1000
+            )
+            response.raise_for_status() # 如果状态码不是 2xx，则抛出 HTTPError 异常
+            result = response.json()
+            
+            # 提取翻译后的文本
+            if "candidates" in result and len(result["candidates"]) > 0:
+                translated_text = result["candidates"][0]["content"]["parts"][0]["text"]
+                return translated_text
+            else:
+                logging.error(f"API 响应中未找到翻译结果: {result}")
+                # 即使响应成功但内容不符合预期，也应该重试或标记为失败
+                # 这里我们选择不立即返回 None，而是让它进入重试逻辑（如果适用）
+                # 或者，如果这种情况不应重试，则直接 return None
+                # 为了与原逻辑保持一致（原逻辑会直接返回None），我们这里也返回None，但不触发重试
+                # 如果希望这种情况也重试，可以将此处的 return None 改为 raise Exception("无效的API响应格式")
+                return None # 或者根据需求决定是否重试
+        except requests.exceptions.RequestException as e:
+            retries += 1
+            logging.error(f"API 请求失败: {e}. 这是第 {retries} 次尝试（共 {max_retries} 次）。")
+            if retries < max_retries:
+                logging.info(f"将在 {retry_delay // 60} 分钟后重试...")
+                time.sleep(retry_delay)
+            else:
+                logging.error("已达到最大重试次数，翻译失败。")
+                return None
+        except Exception as e:
+            logging.error(f"翻译过程中发生未知错误: {e}")
+            return None # 对于其他未知错误，目前不进行重试
     
-    try:
-        response = requests.post(
-            GEMINI_API_URL,
-            headers=headers,
-            data=json.dumps(data),
-            timeout=1000
-        )
-        response.raise_for_status()
-        result = response.json()
-        
-        # 提取翻译后的文本
-        if "candidates" in result and len(result["candidates"]) > 0:
-            translated_text = result["candidates"][0]["content"]["parts"][0]["text"]
-            return translated_text
-        else:
-            logging.error(f"API 响应中未找到翻译结果: {result}")
-            return None
-    except requests.exceptions.RequestException as e:
-        logging.error(f"API 请求失败: {e}")
-        return None
-    except Exception as e:
-        logging.error(f"翻译过程中发生错误: {e}")
-        return None
+    return None # 如果循环结束仍未成功
 
 def get_latest_md_file(directory):
     """获取指定目录下最新的 .md 文件"""
